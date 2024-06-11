@@ -22,8 +22,8 @@ BLUE = (0, 0, 255)
 font = pygame.font.SysFont(None, 36)
 
 # Load images
-background = pygame.transform.scale(pygame.image.load("background.jpg"), (WIDTH, HEIGHT))
-box_image = pygame.transform.scale(pygame.image.load("box.png"), (100, 100))
+background = pygame.transform.scale(pygame.image.load("assets/background.jpg"), (WIDTH, HEIGHT))
+box_image = pygame.transform.scale(pygame.image.load("assets/box.png"), (100, 100))
 box_rect = box_image.get_rect(center=(WIDTH // 2, HEIGHT // 2))
 
 # Initial positions and forces
@@ -36,13 +36,19 @@ right_checkboxes = [{'rect': pygame.Rect(1000, 605 + i * 50, 20, 20), 'checked':
 friction = 0.1
 velocity = 0
 acceleration = 0
+mass = 100
 rope_pos = WIDTH // 2
 
 # Button positions
 start_button = pygame.Rect(600, 650, 100, 50)
 restart_button = pygame.Rect(600, 725, 100, 50)
 stamina_button = pygame.Rect(560, 575, 175, 50)
+settings_button = pygame.Rect(750, HEIGHT - 75, 150, 50)  # Add a settings button
+settings_box = pygame.Rect(WIDTH//2-150, HEIGHT//2 - 200, 300, 300)  # Define the settings box area
+mass_slider = {'rect': pygame.Rect(WIDTH//2-100, HEIGHT//2-110, 200, 10), 'value': 25, 'min': 25, 'max': 275}  # Define the mass slider
+friction_slider = {'rect': pygame.Rect(WIDTH//2-100, HEIGHT//2, 200, 10), 'value': 0.1, 'min': 0, 'max': 1}  # Define the friction slider
 
+settings_open = False
 dragging_slider = None
 
 start_time = None
@@ -58,6 +64,22 @@ def draw_text(text, font, color, surface, x, y):
     textrect.topleft = (x, y)
     surface.blit(textobj, textrect)
 
+def draw_settings_box():
+    pygame.draw.rect(screen, WHITE, settings_box)
+    pygame.draw.rect(screen, BLACK, settings_box, 2)
+    draw_text("Settings", font, BLACK, screen, settings_box.x + 90, settings_box.y + 10)
+    draw_text("Mass", font, BLACK, screen, settings_box.x + 20, settings_box.y + 50)
+    draw_text("Friction", font, BLACK, screen, settings_box.x + 20, settings_box.y + 150)
+
+    # Draw the mass slider
+    pygame.draw.rect(screen, GRAY, mass_slider['rect'])
+    pygame.draw.rect(screen, BLACK, (mass_slider['rect'].x + mass_slider['value'], mass_slider['rect'].y - 5, 10, 20))
+    draw_text(f"{mass_slider['value'] + mass_slider['min']}", font, BLACK, screen, mass_slider['rect'].x + 80, mass_slider['rect'].y + 20)
+
+    # Draw the friction slider
+    pygame.draw.rect(screen, GRAY, friction_slider['rect'])
+    pygame.draw.rect(screen, BLACK, (friction_slider['rect'].x + friction_slider['value'] * friction_slider['rect'].width, friction_slider['rect'].y - 5, 10, 20))
+    draw_text(f"{friction_slider['value']:.2f}", font, BLACK, screen, friction_slider['rect'].x + 80, friction_slider['rect'].y + 20)
 
 def draw_teams():
     for i, member in enumerate(left_team):
@@ -66,10 +88,12 @@ def draw_teams():
             draw_text(str(member['force']) + " N", font, BLACK, screen, member['pos'][0] - 20, member['pos'][1] -50)
             draw_text(f'{i+1}', font, BLACK, screen, member['pos'][0] - 7.5, member['pos'][1] - 15)
 
-            # Draw stamina bar
             stamina_bar_rect = pygame.Rect(member['pos'][0] - 50, member['pos'][1] + 25, 100, 10)
             pygame.draw.rect(screen, RED, stamina_bar_rect)
-            pygame.draw.rect(screen, GREEN, (stamina_bar_rect.x, stamina_bar_rect.y, stamina_bar_rect.width * (member['stamina'] / 100), stamina_bar_rect.height))
+            if member['resting']:  # If stamina is being charged (over 80), color it yellow
+                pygame.draw.rect(screen, (255, 255, 0), (stamina_bar_rect.x, stamina_bar_rect.y, stamina_bar_rect.width * (member['stamina'] / 100), stamina_bar_rect.height))
+            else:
+                pygame.draw.rect(screen, GREEN, (stamina_bar_rect.x, stamina_bar_rect.y, stamina_bar_rect.width * (member['stamina'] / 100), stamina_bar_rect.height))
             draw_text(f'{member["stamina"]:.1f}', font, BLACK, screen, member['pos'][0] + 65, member['pos'][1] + 20)
 
     for i, member in enumerate(right_team):
@@ -78,10 +102,12 @@ def draw_teams():
             draw_text(str(member['force']) + " N", font, BLACK, screen, member['pos'][0] - 20, member['pos'][1] -50)
             draw_text(f'{i+1}', font, BLACK, screen, member['pos'][0] - 7.5, member['pos'][1] - 15)
 
-            # Draw stamina bar
             stamina_bar_rect = pygame.Rect(member['pos'][0] - 50, member['pos'][1] + 25, 100, 10)
             pygame.draw.rect(screen, RED, stamina_bar_rect)
-            pygame.draw.rect(screen, GREEN, (stamina_bar_rect.x, stamina_bar_rect.y, stamina_bar_rect.width * (member['stamina'] / 100), stamina_bar_rect.height))
+            if member['resting']:  # If stamina is being charged (over 80), color it yellow
+                pygame.draw.rect(screen, (255, 255, 0), (stamina_bar_rect.x, stamina_bar_rect.y, stamina_bar_rect.width * (member['stamina'] / 100), stamina_bar_rect.height))
+            else:
+                pygame.draw.rect(screen, GREEN, (stamina_bar_rect.x, stamina_bar_rect.y, stamina_bar_rect.width * (member['stamina'] / 100), stamina_bar_rect.height))
             draw_text(f'{member["stamina"]:.1f}', font, BLACK, screen, member['pos'][0] + 65, member['pos'][1] + 20)
 
 def draw_sliders():
@@ -150,13 +176,15 @@ def update_stamina_and_force():
 
 
 def main():
-    global dragging_slider, start_time, timer_running, simulation_running, velocity, acceleration, rope_pos, winner, stamina_enabled
+    global dragging_slider, settings_open, start_time, timer_running, simulation_running, velocity, acceleration, rope_pos, winner, stamina_enabled, net_force, mass, friction
 
     clock = pygame.time.Clock()
     running = True
 
     while running:
         screen.blit(background, (0, 0))
+        pygame.draw.rect(screen, GREEN, settings_button)
+        draw_text('Settings', font, BLACK, screen, settings_button.x + 10, settings_button.y + 10)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -168,6 +196,7 @@ def main():
                         if slider['rect'].collidepoint(event.pos):
                             dragging_slider = slider
                             break
+
                     for i, checkbox in enumerate(left_checkboxes + right_checkboxes):
                         if checkbox['rect'].collidepoint(event.pos):
                             checkbox['checked'] = not checkbox['checked']
@@ -175,6 +204,14 @@ def main():
                                 left_team[i]['enabled'] = checkbox['checked']
                             else:
                                 right_team[i - len(left_checkboxes)]['enabled'] = checkbox['checked']
+
+                    if settings_button.collidepoint(event.pos):
+                        settings_open = not settings_open
+                    elif settings_open and mass_slider['rect'].collidepoint(event.pos):
+                        dragging_slider = 'mass_slider'
+                    elif settings_open and friction_slider['rect'].collidepoint(event.pos):
+                        dragging_slider = 'friction_slider'
+
                     if start_button.collidepoint(event.pos):
                         if not timer_running:
                             start_time = time.time()
@@ -202,15 +239,27 @@ def main():
                     dragging_slider = None
             elif event.type == pygame.MOUSEMOTION:
                 if dragging_slider:
-                    dragging_slider['value'] = max(0, min(100, event.pos[0] - dragging_slider['rect'].x))
-                    if dragging_slider in left_sliders:
-                        index = left_sliders.index(dragging_slider)
-                        left_team[index]['force'] = dragging_slider['value']
-                        left_team[index]['max_force'] = dragging_slider['value']
+                    if dragging_slider == 'mass_slider':
+                        slider_rect = mass_slider['rect']
+                        new_value = min(max(event.pos[0] - slider_rect.x, 0), slider_rect.width)
+                        mass_slider['value'] = new_value
+                        mass = mass_slider['min'] + new_value
+                    elif dragging_slider == 'friction_slider':
+                        slider_rect = friction_slider['rect']
+                        new_value = min(max(event.pos[0] - slider_rect.x, 0), slider_rect.width) / slider_rect.width
+                        friction_slider['value'] = new_value * (friction_slider['max'] - friction_slider['min']) + friction_slider['min']
+                        friction = friction_slider['value']
                     else:
-                        index = right_sliders.index(dragging_slider)
-                        right_team[index]['force'] = dragging_slider['value']
-                        right_team[index]['max_force'] = dragging_slider['value']
+                        dragging_slider['value'] = max(0, min(100, event.pos[0] - dragging_slider['rect'].x))
+                        if dragging_slider in left_sliders:
+                            index = left_sliders.index(dragging_slider)
+                            left_team[index]['force'] = dragging_slider['value']
+                            left_team[index]['max_force'] = dragging_slider['value']
+                        else:
+                            index = right_sliders.index(dragging_slider)
+                            right_team[index]['force'] = dragging_slider['value']
+                            right_team[index]['max_force'] = dragging_slider['value']
+
 
         draw_teams()
         draw_sliders()
@@ -226,7 +275,10 @@ def main():
         draw_text('Restart', font, BLACK, screen, restart_button.x + 10, restart_button.y + 10)
         pygame.draw.rect(screen, GRAY, stamina_button)
         draw_text(f'Stamina: {"On" if stamina_enabled else "Off"}', font, BLACK, screen, stamina_button.x + 20, stamina_button.y + 10)
+        pygame.draw.rect(screen, GREEN, settings_button)
+        draw_text("Settings", font, BLACK, screen, settings_button.x + 10, settings_button.y + 10)
 
+        # Add more settings options as needed
         total_force_left = calculate_effective_force(left_team)
         total_force_right = calculate_effective_force(right_team)
         net_force = total_force_right - total_force_left
@@ -259,9 +311,12 @@ def main():
                 pygame.draw.line(screen, BLACK, (right_checkboxes[i]['rect'].x, right_checkboxes[i]['rect'].y), (right_checkboxes[i]['rect'].x + 20, right_checkboxes[i]['rect'].y + 20), 2)
                 pygame.draw.line(screen, BLACK, (right_checkboxes[i]['rect'].x + 20, right_checkboxes[i]['rect'].y), (right_checkboxes[i]['rect'].x, right_checkboxes[i]['rect'].y + 20), 2)
 
+        if settings_open:
+            draw_settings_box()
+
         if simulation_running:
             update_stamina_and_force()
-            acceleration = net_force / 100.0  # pixels per second squared
+            acceleration = net_force / mass  # pixels per second squared
             velocity += acceleration
             velocity *= (1 - friction)
             rope_pos += velocity
