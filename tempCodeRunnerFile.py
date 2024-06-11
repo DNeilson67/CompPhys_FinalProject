@@ -1,0 +1,1 @@
+draw_text(f'Stamina: {member["stamina"]:.1f}', font, BLACK, screen, member['pos'][0] - 50, member['pos'][1] + 30)
