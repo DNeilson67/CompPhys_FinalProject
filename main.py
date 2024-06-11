@@ -21,6 +21,11 @@ BLUE = (0, 0, 255)
 # Fonts
 font = pygame.font.SysFont(None, 36)
 
+# Load images
+background = pygame.transform.scale(pygame.image.load("background.jpg"), (WIDTH, HEIGHT))
+box_image = pygame.transform.scale(pygame.image.load("box.png"), (100, 100))
+box_rect = box_image.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+
 # Initial positions and forces
 left_team = [
     {'pos': [100, 150 + i * 100], 'force': 50, 'selected': False, 'team': 'left', 'stamina': 100, 'max_force': 50,
@@ -40,12 +45,15 @@ rope_pos = WIDTH // 2
 # Button positions
 start_button = pygame.Rect(550, 700, 100, 50)
 restart_button = pygame.Rect(670, 700, 100, 50)
+stamina_button = pygame.Rect(900, 700, 200, 50)
 
 dragging_slider = None
 
 start_time = None
 timer_running = False
 simulation_running = False
+winner = None  # Variable to store the winner
+stamina_enabled = True  # Variable to track the stamina state
 
 
 def draw_text(text, font, color, surface, x, y):
@@ -101,40 +109,44 @@ def calculate_effective_force(team):
     total_force = 0
     for member in team:
         if member['enabled']:
-            total_force += member['force'] * (member['stamina'] / 100.0)
+            if stamina_enabled:
+                total_force += member['force'] * (member['stamina'] / 100.0)
+            else:
+                total_force += member['force']
     return total_force
 
 
 def update_stamina_and_force():
-    for member in left_team + right_team:
-        if member['enabled']:
-            if member['stamina'] > 0:
-                if not member['resting']:
-                    member['stamina'] -= member['force'] / 1000.0
-                    if member['stamina'] < 20:  # Threshold for resting
-                        member['resting'] = True
+    if stamina_enabled:
+        for member in left_team + right_team:
+            if member['enabled']:
+                if member['stamina'] > 0:
+                    if not member['resting']:
+                        member['stamina'] -= member['force'] / 1000.0
+                        if member['stamina'] < 20:  # Threshold for resting
+                            member['resting'] = True
+                    else:
+                        member['stamina'] += 0.5  # Regain stamina faster when resting
+                        if member['stamina'] > 80:  # Threshold to stop resting
+                            member['resting'] = False
                 else:
-                    member['stamina'] += 0.5  # Regain stamina faster when resting
-                    if member['stamina'] > 80:  # Threshold to stop resting
-                        member['resting'] = False
-            else:
-                member['stamina'] = 0
+                    member['stamina'] = 0
 
-            # Adjust force based on stamina and resting state
-            if member['resting']:
-                member['force'] = member['max_force'] / 2
-            else:
-                member['force'] = member['max_force']
+                # Adjust force based on stamina and resting state
+                if member['resting']:
+                    member['force'] = member['max_force'] / 2
+                else:
+                    member['force'] = member['max_force']
 
 
 def main():
-    global dragging_slider, start_time, timer_running, simulation_running, velocity, acceleration, rope_pos
+    global dragging_slider, start_time, timer_running, simulation_running, velocity, acceleration, rope_pos, winner, stamina_enabled
 
     clock = pygame.time.Clock()
     running = True
 
     while running:
-        screen.fill(WHITE)
+        screen.blit(background, (0, 0))
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -158,12 +170,14 @@ def main():
                             start_time = time.time()
                             timer_running = True
                             simulation_running = True
+                            winner = None  # Reset the winner when starting a new game
                     if restart_button.collidepoint(event.pos):
                         start_time = None
                         timer_running = False
                         simulation_running = False
                         velocity = 0
                         rope_pos = WIDTH // 2
+                        winner = None  # Reset the winner on restart
                         for member in left_team + right_team:
                             member['stamina'] = 100
                             member['force'] = member['max_force']
@@ -171,6 +185,8 @@ def main():
                             member['resting'] = False
                             for checkbox in left_checkboxes + right_checkboxes:
                                 checkbox['checked'] = True
+                    if stamina_button.collidepoint(event.pos):
+                        stamina_enabled = not stamina_enabled
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 1:
                     dragging_slider = None
@@ -190,13 +206,16 @@ def main():
         draw_sliders()
         draw_checkboxes()
 
-        # Draw rope
-        pygame.draw.line(screen, BLACK, (rope_pos - 50, HEIGHT // 2), (rope_pos + 50, HEIGHT // 2), 5)
+        # Draw the box representing the tug of war
+        box_rect.centerx = rope_pos
+        screen.blit(box_image, box_rect)
 
         pygame.draw.rect(screen, GRAY, start_button)
         draw_text('Start', font, BLACK, screen, start_button.x + 20, start_button.y + 10)
         pygame.draw.rect(screen, GRAY, restart_button)
         draw_text('Restart', font, BLACK, screen, restart_button.x + 10, restart_button.y + 10)
+        pygame.draw.rect(screen, GRAY, stamina_button)
+        draw_text(f'Stamina: {"On" if stamina_enabled else "Off"}', font, BLACK, screen, stamina_button.x + 20, stamina_button.y + 10)
 
         total_force_left = calculate_effective_force(left_team)
         total_force_right = calculate_effective_force(right_team)
@@ -214,13 +233,20 @@ def main():
             rope_pos += velocity
 
             if rope_pos < 100:
-                draw_text('Right Team Wins!', font, RED, screen, WIDTH // 2 - 100, HEIGHT // 2)
+                winner = 'Left'  # Corrected to declare Left as winner when rope is at left edge
                 simulation_running = False
                 timer_running = False
             elif rope_pos > WIDTH - 100:
-                draw_text('Left Team Wins!', font, GREEN, screen, WIDTH // 2 - 100, HEIGHT // 2)
+                winner = 'Right'  # Corrected to declare Right as winner when rope is at right edge
                 simulation_running = False
                 timer_running = False
+
+        # Display the winner if there is one
+        if winner:
+            if winner == 'Right':
+                draw_text('Right Team Wins!', font, RED, screen, WIDTH // 2 - 100, HEIGHT // 2)
+            else:
+                draw_text('Left Team Wins!', font, GREEN, screen, WIDTH // 2 - 100, HEIGHT // 2)
 
         draw_text(f'Speed: {abs(velocity):.2f} px/s', font, BLACK, screen, 10, HEIGHT - 110)
         draw_text(f'Acceleration: {acceleration:.2f} px/s²', font, BLACK, screen, 10, HEIGHT - 80)
@@ -230,7 +256,6 @@ def main():
 
         pygame.display.flip()
         clock.tick(60)
-
 
 if __name__ == '__main__':
     main()
